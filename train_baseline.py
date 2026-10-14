@@ -66,18 +66,26 @@ def main():
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(a.epochs * .5), int(a.epochs * .75)], 0.1)
 
+    best_auc, best_ep = -1, 0
     for ep in range(a.epochs):
         model.train(); t0 = time.time()
         for x, y in tr:
             loss = F.cross_entropy(model(x.to(dev)), y.view(-1).long().to(dev))
             opt.zero_grad(); loss.backward(); opt.step()
         sched.step()
-        print(f"epoch {ep + 1}/{a.epochs} loss {loss.item():.4f} ({time.time() - t0:.0f}s)", flush=True)
+        vl, vy = predict(model, va, dev)
+        val_auc = metrics(vl, vy.astype(np.int64))["auc"]
+        if val_auc > best_auc:  # model selection by val AUC, as in the MedMNIST v2 paper
+            best_auc, best_ep = val_auc, ep + 1
+            best = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        print(f"epoch {ep + 1}/{a.epochs} loss {loss.item():.4f} val_auc {val_auc:.4f} ({time.time() - t0:.0f}s)", flush=True)
 
+    model.load_state_dict(best)
+    print(f"best epoch {best_ep} (val AUC {best_auc:.4f})")
     os.makedirs(a.out, exist_ok=True)
     tag = f"{a.out}/{a.data}_{a.size}_ce_s{a.seed}"
     vl, vy = predict(model, va, dev); tl, ty = predict(model, te, dev)
-    np.savez(f"{tag}.npz", val_logits=vl, val_labels=vy, test_logits=tl, test_labels=ty)
+    np.savez(f"{tag}.npz", val_logits=vl, val_labels=vy, test_logits=tl, test_labels=ty, best_epoch=best_ep)
     torch.save(model.state_dict(), f"{tag}.pt")
     print("test:", {k: round(float(v), 4) for k, v in metrics(tl, ty.astype(np.int64)).items()})
     if dev == "cuda": print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MiB")
