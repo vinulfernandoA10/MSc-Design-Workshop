@@ -3,7 +3,7 @@
 Saves val/test logits so post-hoc methods (temperature scaling, ensembles) need no retraining.
 Recipe follows the MedMNIST v2 paper: Adam lr 1e-3, batch 128, 100 epochs, lr x0.1 at 50 and 75.
 
-    python train_baseline.py --data pneumoniamnist --epochs 100 --seed 0
+    python train_baseline.py --data pneumoniamnist --epochs 100 --seed 0 [--loss ce|ls|focal]
 """
 import argparse, os, time
 import numpy as np
@@ -19,6 +19,19 @@ def ece(probs, labels, n_bins=15):
     bins = np.minimum((conf * n_bins).astype(int), n_bins - 1)
     return sum(abs((pred[m] == labels[m]).mean() - conf[m].mean()) * m.mean()
                for b in range(n_bins) if (m := bins == b).any())
+
+
+def focal_loss(logits, y, gamma=3.0):
+    """Focal loss (Lin et al., 2017); gamma=3 is the calibration setting of Mukhoti et al. (2020)."""
+    logp = F.log_softmax(logits, 1).gather(1, y[:, None]).squeeze(1)
+    return (-(1 - logp.exp()) ** gamma * logp).mean()
+
+
+LOSSES = {
+    "ce": F.cross_entropy,
+    "ls": lambda z, y: F.cross_entropy(z, y, label_smoothing=0.1),  # Szegedy et al. (2016); 0.1 is the standard value
+    "focal": focal_loss,
+}
 
 
 def metrics(logits, labels):
@@ -50,6 +63,7 @@ def main():
     p.add_argument("--bs", type=int, default=128)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="runs")
+    p.add_argument("--loss", default="ce", choices=LOSSES)
     a = p.parse_args()
 
     torch.manual_seed(a.seed); np.random.seed(a.seed)
@@ -67,7 +81,7 @@ def main():
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(a.epochs * .5), int(a.epochs * .75)], 0.1)
 
     os.makedirs(a.out, exist_ok=True)
-    tag = f"{a.out}/{a.data}_{a.size}_ce_s{a.seed}"
+    tag = f"{a.out}/{a.data}_{a.size}_{a.loss}_s{a.seed}"
     ckpt = f"{tag}_resume.pt"  # per-epoch state so an interrupted run continues instead of restarting
     best_auc, best_ep, start, best = -1, 0, 0, None
     if os.path.exists(ckpt):
@@ -80,7 +94,7 @@ def main():
     for ep in range(start, a.epochs):
         model.train(); t0 = time.time()
         for x, y in tr:
-            loss = F.cross_entropy(model(x.to(dev)), y.view(-1).long().to(dev))
+            loss = LOSSES[a.loss](model(x.to(dev)), y.view(-1).long().to(dev))
             opt.zero_grad(); loss.backward(); opt.step()
         sched.step()
         vl, vy = predict(model, va, dev)
@@ -108,4 +122,6 @@ if __name__ == "__main__":
     # self-check: a perfectly calibrated toy case gives ECE 0, an overconfident one gives the gap
     y = np.array([0, 0, 1, 1]); assert ece(np.array([[1., 0], [1, 0], [0, 1], [0, 1]]), y) == 0
     assert abs(ece(np.array([[.9, .1]] * 4), y) - 0.4) < 1e-9
+    z, t = torch.randn(8, 3), torch.randint(0, 3, (8,))  # focal loss with gamma=0 reduces to cross-entropy
+    assert torch.allclose(focal_loss(z, t, gamma=0), F.cross_entropy(z, t))
     main()
