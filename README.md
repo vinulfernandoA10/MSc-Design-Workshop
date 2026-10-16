@@ -26,5 +26,7 @@ python temp_scale.py runs/pneumoniamnist_28_ce_s0.npz
 | | Acc | AUC | ECE | NLL |
 |---|---|---|---|---|
 | MedMNIST v2 paper (ResNet-18) | 0.854 | 0.944 | – | – |
-| Baseline, 100 epochs | 0.843 | 0.937 | 0.146 | 1.387 |
+| Baseline, best val-AUC checkpoint (epoch 5) | 0.894 | 0.950 | 0.075 | 0.437 |
+| + Temperature scaling (T = 1.93) | 0.894 | 0.950 | 0.039 | 0.286 |
+| Baseline, last epoch (100) | 0.843 | 0.937 | 0.146 | 1.387 |
 | + Temperature scaling (T = 3.15) | 0.843 | 0.939 | 0.113 | 0.488 |
