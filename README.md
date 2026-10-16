@@ -21,7 +21,12 @@ python train_baseline.py --data pneumoniamnist --epochs 100 --seed 0
 python temp_scale.py runs/pneumoniamnist_28_ce_s0.npz
 ```
 
-## Results so far (PneumoniaMNIST, 28px, seed 0)
+## Results
+
+5-seed summary (mean ± std, ensembles): [results_pneumoniamnist.md](results_pneumoniamnist.md),
+produced by `python run_all.py` then `python analyze.py`.
+
+### Seed 0 only (PneumoniaMNIST, 28px)
 
 | | Acc | AUC | ECE | NLL |
 |---|---|---|---|---|
