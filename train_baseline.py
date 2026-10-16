@@ -66,8 +66,18 @@ def main():
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(a.epochs * .5), int(a.epochs * .75)], 0.1)
 
-    best_auc, best_ep = -1, 0
-    for ep in range(a.epochs):
+    os.makedirs(a.out, exist_ok=True)
+    tag = f"{a.out}/{a.data}_{a.size}_ce_s{a.seed}"
+    ckpt = f"{tag}_resume.pt"  # per-epoch state so an interrupted run continues instead of restarting
+    best_auc, best_ep, start, best = -1, 0, 0, None
+    if os.path.exists(ckpt):
+        s = torch.load(ckpt, weights_only=False)
+        model.load_state_dict(s["model"]); opt.load_state_dict(s["opt"]); sched.load_state_dict(s["sched"])
+        best_auc, best_ep, start, best = s["best_auc"], s["best_ep"], s["epoch"], s["best"]
+        torch.set_rng_state(s["rng"])
+        if dev == "cuda": torch.cuda.set_rng_state(s["cuda_rng"])
+        print(f"resuming after epoch {start}")
+    for ep in range(start, a.epochs):
         model.train(); t0 = time.time()
         for x, y in tr:
             loss = F.cross_entropy(model(x.to(dev)), y.view(-1).long().to(dev))
@@ -78,15 +88,18 @@ def main():
         if val_auc > best_auc:  # model selection by val AUC, as in the MedMNIST v2 paper
             best_auc, best_ep = val_auc, ep + 1
             best = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), sched=sched.state_dict(), epoch=ep + 1,
+                        best=best, best_auc=best_auc, best_ep=best_ep, rng=torch.get_rng_state(),
+                        cuda_rng=torch.cuda.get_rng_state() if dev == "cuda" else None), ckpt + ".tmp")
+        os.replace(ckpt + ".tmp", ckpt)  # atomic: a kill mid-save leaves the previous checkpoint intact
         print(f"epoch {ep + 1}/{a.epochs} loss {loss.item():.4f} val_auc {val_auc:.4f} ({time.time() - t0:.0f}s)", flush=True)
 
     model.load_state_dict(best)
     print(f"best epoch {best_ep} (val AUC {best_auc:.4f})")
-    os.makedirs(a.out, exist_ok=True)
-    tag = f"{a.out}/{a.data}_{a.size}_ce_s{a.seed}"
     vl, vy = predict(model, va, dev); tl, ty = predict(model, te, dev)
     np.savez(f"{tag}.npz", val_logits=vl, val_labels=vy, test_logits=tl, test_labels=ty, best_epoch=best_ep)
     torch.save(model.state_dict(), f"{tag}.pt")
+    os.remove(ckpt)
     print("test:", {k: round(float(v), 4) for k, v in metrics(tl, ty.astype(np.int64)).items()})
     if dev == "cuda": print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MiB")
 
