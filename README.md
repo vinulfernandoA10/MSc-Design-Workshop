@@ -28,5 +28,12 @@ python temp_scale.py runs/pneumoniamnist_28_ce_s0.npz
 | MedMNIST v2 paper (ResNet-18) | 0.854 | 0.944 | – | – |
 | Baseline, best val-AUC checkpoint (epoch 5) | 0.894 | 0.950 | 0.075 | 0.437 |
 | + Temperature scaling (T = 1.93) | 0.894 | 0.950 | 0.039 | 0.286 |
+| Label smoothing 0.1 (epoch 3) | 0.873 | 0.889 | 0.040 | 0.357 |
+| + Temperature scaling (T = 0.59) | 0.873 | 0.889 | 0.085 | 0.462 |
+| Focal loss γ=3 (epoch 4) | 0.861 | 0.954 | 0.051 | 0.351 |
+| + Temperature scaling (T = 0.47) | 0.861 | 0.954 | 0.098 | 0.521 |
 | Baseline, last epoch (100) | 0.843 | 0.937 | 0.146 | 1.387 |
 | + Temperature scaling (T = 3.15) | 0.843 | 0.939 | 0.113 | 0.488 |
+
+Note: PneumoniaMNIST has a built-in label shift — pneumonia is 74.2% of val but 62.5% of test —
+so temperatures fitted on val do not transfer cleanly to test.
