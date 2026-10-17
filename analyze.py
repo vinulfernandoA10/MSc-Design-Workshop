@@ -14,11 +14,6 @@ from corrupt import SEVERITY
 from temp_scale import fit_temperature
 from train_baseline import METHODS, metrics, run_name
 
-p = argparse.ArgumentParser()
-p.add_argument("--data", default="pneumoniamnist")
-p.add_argument("--select", default="nll", choices=["auc", "nll"])
-p.add_argument("--runs", default="runs", help="folder with the .npz files")
-a = p.parse_args()
 NAMES = {"ce": "Cross-entropy", "ls": "Label smoothing", "focal": "Focal loss", "mcdo": "Dropout 0.5"}
 SETS = ["val", "test"] + [f"c_{c}_{s}" for s in range(1, 6) for c in SEVERITY]
 
@@ -50,37 +45,43 @@ def fmt(vals):
     return f"{np.mean(vals):.3f} ± {np.std(vals):.3f}" if len(vals) > 1 else f"{vals[0]:.3f}"
 
 
-# val ECE is in-sample for checkpoint selection and temperature fitting; the gap is what fails to transfer to test
-clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ | val ECE | test − val ECE |", "|---|---|---|---|---|---|---|---|"]
-shift = {k: ["| Method | clean | sev 1 | sev 2 | sev 3 | sev 4 | sev 5 |", "|---|---|---|---|---|---|---|"]
-         for k in ["ece", "acc"]}
-for method, (loss, dropout) in METHODS.items():
-    files = sorted(glob.glob(f"{a.runs}/{run_name(a.data, loss, '[0-9]', dropout=dropout, select=a.select)}.npz"))
-    if not files: continue
-    runs = [np.load(f) for f in files]
-    name = NAMES[method]
-    variants = [(name, "", False, False), ("+ temp. scaling", "", True, False),
-                (f"{len(runs)}-seed ensemble", "", False, True)]
-    if dropout:
-        variants = [(f"{name} (single pass)", "", False, False), (f"MC Dropout ({name})", "mc_", False, False),
-                    ("+ temp. scaling", "mc_", True, False)]
-    for label, prefix, ts, ens in variants:
-        res, temps = score(runs, prefix, ts, ens)
-        if ts: label += f" (T = {np.mean(temps):.2f})"
-        clean.append(f"| {label} | {len(runs)} | " + " | ".join(fmt([r['test'][k] for r in res]) for k in ["acc", "auc", "ece", "nll"])
-                     + f" | {fmt([r['val']['ece'] for r in res])} | {fmt([r['test']['ece'] - r['val']['ece'] for r in res])} |")
-        if "c_noise_1" in res[0]:
-            for k in shift:
-                shift[k].append(f"| {label} | " + " | ".join(f"{v:.3f}" for v in by_severity(res, k)) + " |")
-    clean.append(f"| *best epochs: {[int(r['best_epoch']) for r in runs]}* | | | | | | | |")
+if __name__ == "__main__":  # importable: significance.py reuses score()
+    p = argparse.ArgumentParser()
+    p.add_argument("--data", default="pneumoniamnist")
+    p.add_argument("--select", default="nll", choices=["auc", "nll"])
+    p.add_argument("--runs", default="runs", help="folder with the .npz files")
+    a = p.parse_args()
+    # val ECE is in-sample for checkpoint selection and temperature fitting; the gap is what fails to transfer to test
+    clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ | val ECE | test − val ECE |", "|---|---|---|---|---|---|---|---|"]
+    shift = {k: ["| Method | clean | sev 1 | sev 2 | sev 3 | sev 4 | sev 5 |", "|---|---|---|---|---|---|---|"]
+             for k in ["ece", "acc"]}
+    for method, (loss, dropout) in METHODS.items():
+        files = sorted(glob.glob(f"{a.runs}/{run_name(a.data, loss, '[0-9]', dropout=dropout, select=a.select)}.npz"))
+        if not files: continue
+        runs = [np.load(f) for f in files]
+        name = NAMES[method]
+        variants = [(name, "", False, False), ("+ temp. scaling", "", True, False),
+                    (f"{len(runs)}-seed ensemble", "", False, True)]
+        if dropout:
+            variants = [(f"{name} (single pass)", "", False, False), (f"MC Dropout ({name})", "mc_", False, False),
+                        ("+ temp. scaling", "mc_", True, False)]
+        for label, prefix, ts, ens in variants:
+            res, temps = score(runs, prefix, ts, ens)
+            if ts: label += f" (T = {np.mean(temps):.2f})"
+            clean.append(f"| {label} | {len(runs)} | " + " | ".join(fmt([r['test'][k] for r in res]) for k in ["acc", "auc", "ece", "nll"])
+                         + f" | {fmt([r['val']['ece'] for r in res])} | {fmt([r['test']['ece'] - r['val']['ece'] for r in res])} |")
+            if "c_noise_1" in res[0]:
+                for k in shift:
+                    shift[k].append(f"| {label} | " + " | ".join(f"{v:.3f}" for v in by_severity(res, k)) + " |")
+        clean.append(f"| *best epochs: {[int(r['best_epoch']) for r in runs]}* | | | | | | | |")
 
-out = [f"# Results: {a.data} (28px, checkpoint selected by val {a.select.upper()})", "",
-       "## Clean test set (mean ± std over seeds)", ""] + clean
-if len(shift["ece"]) > 2:
-    out += ["", "## ECE ↓ under corruption (mean over seeds and the 5 corruption types)", ""] + shift["ece"]
-    out += ["", "## Accuracy under corruption", ""] + shift["acc"]
-out = "\n".join(out)
-dest = f"results_{a.data}_{a.select}.md" if a.runs == "runs" else f"{a.runs}/results_{a.data}_{a.select}.md"
-open(dest, "w", encoding="utf-8").write(out + "\n")
-sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252, which lacks ± and ↓
-print(out)
+    out = [f"# Results: {a.data} (28px, checkpoint selected by val {a.select.upper()})", "",
+           "## Clean test set (mean ± std over seeds)", ""] + clean
+    if len(shift["ece"]) > 2:
+        out += ["", "## ECE ↓ under corruption (mean over seeds and the 5 corruption types)", ""] + shift["ece"]
+        out += ["", "## Accuracy under corruption", ""] + shift["acc"]
+    out = "\n".join(out)
+    dest = f"results_{a.data}_{a.select}.md" if a.runs == "runs" else f"{a.runs}/results_{a.data}_{a.select}.md"
+    open(dest, "w", encoding="utf-8").write(out + "\n")
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252, which lacks ± and ↓
+    print(out)
