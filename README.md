@@ -14,17 +14,24 @@ Tested on a GTX 1050 Ti (4 GB): ResNet-18 at 28px uses ~700 MiB, ~10 s/epoch on 
 ## Usage
 
 ```bash
-# train baseline (MedMNIST v2 recipe: Adam 1e-3, batch 128, 100 epochs); saves model + val/test logits to runs/
-python train_baseline.py --data pneumoniamnist --epochs 100 --seed 0
+# all methods (cross-entropy, label smoothing, focal loss, MC Dropout) x seeds 0-4; resumable
+python run_all.py --data pneumoniamnist --epochs 50
 
-# temperature scaling on the saved logits (no retraining)
-python temp_scale.py runs/pneumoniamnist_28_ce_s0.npz
+# summary tables: clean test set, plus ECE / accuracy under 5 corruptions x 5 severities
+python analyze.py --data pneumoniamnist
 ```
+
+| File | Purpose |
+|---|---|
+| `train_baseline.py` | One training run: ResNet-18, `--loss ce/ls/focal`, `--dropout`, `--select auc/nll`; saves logits for val, test, MC Dropout and 25 corrupted test sets |
+| `corrupt.py` | Test-time corruptions (noise, blur, contrast, brightness, JPEG) at 5 severities, after CIFAR-10-C |
+| `temp_scale.py` | Temperature scaling on saved logits |
+| `run_all.py` | Runs every method x seed; skips finished runs |
+| `analyze.py` | Mean ± std over seeds, temperature scaling, ensembles, shift tables |
 
 ## Results
 
-5-seed summary (mean ± std, ensembles): [results_pneumoniamnist.md](results_pneumoniamnist.md),
-produced by `python run_all.py` then `python analyze.py`.
+- [results_pneumoniamnist_auc.md](results_pneumoniamnist_auc.md): 5 seeds, checkpoint selected by val AUC (MedMNIST protocol), clean test only.
 
 ### Seed 0 only (PneumoniaMNIST, 28px)
 

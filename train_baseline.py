@@ -11,6 +11,7 @@ import torch, torch.nn as nn, torch.nn.functional as F
 import torchvision, torchvision.transforms as T
 import medmnist
 from sklearn.metrics import roc_auc_score
+from corrupt import SEVERITY, corrupt
 
 
 def ece(probs, labels, n_bins=15):
@@ -41,11 +42,22 @@ def metrics(logits, labels):
     return dict(acc=(probs.argmax(1) == labels).mean(), auc=auc, ece=ece(probs, labels), nll=nll)
 
 
-def resnet18(in_ch, n_cls):
+def resnet18(in_ch, n_cls, p_drop=0.0):
     m = torchvision.models.resnet18(num_classes=n_cls)
     m.conv1 = nn.Conv2d(in_ch, 64, 3, 1, 1, bias=False)  # small-image stem: 28px input would vanish under the 7x7/stride-2 + maxpool stem
     m.maxpool = nn.Identity()
+    if p_drop:  # dropout before the classifier, as in Gal & Ghahramani's (2016) CNN experiments
+        m.fc = nn.Sequential(nn.Dropout(p_drop), m.fc)
     return m
+
+
+METHODS = {  # method -> (loss, dropout); shared by run_all.py and analyze.py
+    "ce": ("ce", 0.0), "ls": ("ls", 0.0), "focal": ("focal", 0.0), "mcdo": ("ce", 0.5)}
+
+
+def run_name(data, loss, seed, size=28, dropout=0.0, select="auc"):
+    """File stem shared by train_baseline.py, run_all.py and analyze.py."""
+    return f"{data}_{size}_{loss}{f'_do{dropout:g}' if dropout else ''}{'_nll' if select == 'nll' else ''}_s{seed}"
 
 
 @torch.no_grad()
@@ -53,6 +65,19 @@ def predict(model, loader, dev):
     model.eval()
     out = [(model(x.to(dev)).cpu(), y.view(-1)) for x, y in loader]
     return torch.cat([o for o, _ in out]).numpy(), torch.cat([y for _, y in out]).numpy()
+
+
+@torch.no_grad()
+def predict_x(model, x, dev, mc=0):
+    """Logits for a tensor of normalised images; with mc > 0, log of the MC-Dropout-averaged probabilities."""
+    model.eval()
+    if not mc:
+        return torch.cat([model(b.to(dev)).cpu() for b in x.split(512)]).numpy()
+    for m in model.modules():
+        if isinstance(m, nn.Dropout): m.train()  # keep dropout active at test time
+    p = sum(torch.cat([model(b.to(dev)).softmax(1).cpu() for b in x.split(512)]) for _ in range(mc)) / mc
+    model.eval()
+    return p.clamp_min(1e-12).log().numpy()
 
 
 def main():
@@ -64,6 +89,9 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="runs")
     p.add_argument("--loss", default="ce", choices=LOSSES)
+    p.add_argument("--select", default="auc", choices=["auc", "nll"], help="validation metric for checkpoint selection")
+    p.add_argument("--dropout", type=float, default=0.0, help="> 0 adds dropout and saves MC Dropout predictions")
+    p.add_argument("--mc", type=int, default=20, help="MC Dropout forward passes")
     a = p.parse_args()
 
     torch.manual_seed(a.seed); np.random.seed(a.seed)
@@ -76,18 +104,18 @@ def main():
         DS(split=split, transform=tf, download=True, size=a.size), batch_size=a.bs, shuffle=shuf, num_workers=0)
     tr, va, te = load("train", True), load("val", False), load("test", False)
 
-    model = resnet18(info["n_channels"], len(info["label"])).to(dev)
+    model = resnet18(info["n_channels"], len(info["label"]), a.dropout).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(a.epochs * .5), int(a.epochs * .75)], 0.1)
 
     os.makedirs(a.out, exist_ok=True)
-    tag = f"{a.out}/{a.data}_{a.size}_{a.loss}_s{a.seed}"
+    tag = f"{a.out}/{run_name(a.data, a.loss, a.seed, a.size, a.dropout, a.select)}"
     ckpt = f"{tag}_resume.pt"  # per-epoch state so an interrupted run continues instead of restarting
-    best_auc, best_ep, start, best = -1, 0, 0, None
+    best_score, best_ep, start, best = -np.inf, 0, 0, None
     if os.path.exists(ckpt):
         s = torch.load(ckpt, weights_only=False)
         model.load_state_dict(s["model"]); opt.load_state_dict(s["opt"]); sched.load_state_dict(s["sched"])
-        best_auc, best_ep, start, best = s["best_auc"], s["best_ep"], s["epoch"], s["best"]
+        best_score, best_ep, start, best = s["best_score"], s["best_ep"], s["epoch"], s["best"]
         torch.set_rng_state(s["rng"])
         if dev == "cuda": torch.cuda.set_rng_state(s["cuda_rng"])
         print(f"resuming after epoch {start}")
@@ -98,23 +126,38 @@ def main():
             opt.zero_grad(); loss.backward(); opt.step()
         sched.step()
         vl, vy = predict(model, va, dev)
-        val_auc = metrics(vl, vy.astype(np.int64))["auc"]
-        if val_auc > best_auc:  # model selection by val AUC, as in the MedMNIST v2 paper
-            best_auc, best_ep = val_auc, ep + 1
+        vm = metrics(vl, vy.astype(np.int64))
+        score = vm["auc"] if a.select == "auc" else -vm["nll"]  # AUC: MedMNIST v2 protocol; NLL: tracks overconfidence
+        if score > best_score:
+            best_score, best_ep = score, ep + 1
             best = {k: v.detach().clone() for k, v in model.state_dict().items()}
         torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), sched=sched.state_dict(), epoch=ep + 1,
-                        best=best, best_auc=best_auc, best_ep=best_ep, rng=torch.get_rng_state(),
+                        best=best, best_score=best_score, best_ep=best_ep, rng=torch.get_rng_state(),
                         cuda_rng=torch.cuda.get_rng_state() if dev == "cuda" else None), ckpt + ".tmp")
         os.replace(ckpt + ".tmp", ckpt)  # atomic: a kill mid-save leaves the previous checkpoint intact
-        print(f"epoch {ep + 1}/{a.epochs} loss {loss.item():.4f} val_auc {val_auc:.4f} ({time.time() - t0:.0f}s)", flush=True)
+        print(f"epoch {ep + 1}/{a.epochs} loss {loss.item():.4f} val_auc {vm['auc']:.4f} val_nll {vm['nll']:.4f} "
+              f"({time.time() - t0:.0f}s)", flush=True)
 
     model.load_state_dict(best)
-    print(f"best epoch {best_ep} (val AUC {best_auc:.4f})")
-    vl, vy = predict(model, va, dev); tl, ty = predict(model, te, dev)
-    np.savez(f"{tag}.npz", val_logits=vl, val_labels=vy, test_logits=tl, test_labels=ty, best_epoch=best_ep)
+    print(f"best epoch {best_ep} (by val {a.select})")
+    grab = lambda loader: (torch.cat([x for x, _ in loader]), torch.cat([y.view(-1) for _, y in loader]).numpy())
+    (xv, vy), (xt, ty) = grab(va), grab(te)
+    out = dict(val_labels=vy, test_labels=ty, best_epoch=best_ep)
+
+    def evaluate(key, x):
+        out[f"{key}_logits"] = predict_x(model, x, dev)
+        if a.dropout: out[f"mc_{key}_logits"] = predict_x(model, x, dev, a.mc)
+
+    evaluate("val", xv); evaluate("test", xt)
+    for c in SEVERITY:  # corrupted copies of the test set, for the distribution-shift experiments
+        for s in range(1, 6):
+            evaluate(f"c_{c}_{s}", (corrupt(xt * .5 + .5, c, s) - .5) / .5)
+    np.savez(f"{tag}.npz", **out)
     torch.save(model.state_dict(), f"{tag}.pt")
     os.remove(ckpt)
-    print("test:", {k: round(float(v), 4) for k, v in metrics(tl, ty.astype(np.int64)).items()})
+    ty = ty.astype(np.int64)
+    print("test:", {k: round(float(v), 4) for k, v in metrics(out["test_logits"], ty).items()})
+    if a.dropout: print("test MC Dropout:", {k: round(float(v), 4) for k, v in metrics(out["mc_test_logits"], ty).items()})
     if dev == "cuda": print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MiB")
 
 

@@ -1,47 +1,84 @@
-"""Summarise all runs: mean +- std over seeds, with/without temperature scaling, plus 5-seed deep ensembles.
+"""Summarise all runs of one dataset into results_<data>_<select>.md.
 
-    python analyze.py                  # pneumoniamnist, writes results_<data>.md
+Table 1: clean test set, mean +- std over seeds, for each method with/without temperature scaling,
+         MC Dropout, and the 5-seed ensemble.
+Table 2/3: ECE and accuracy under corruption, by severity (averaged over the 5 corruption types).
+
+    python analyze.py                          # pneumoniamnist, NLL-selected runs
+    python analyze.py --select auc             # the earlier AUC-selected runs (clean table only)
 """
 import argparse, glob, sys
 import numpy as np
 import torch
-from train_baseline import metrics
+from corrupt import SEVERITY
 from temp_scale import fit_temperature
+from train_baseline import METHODS, metrics, run_name
 
 p = argparse.ArgumentParser()
 p.add_argument("--data", default="pneumoniamnist")
+p.add_argument("--select", default="nll", choices=["auc", "nll"])
+p.add_argument("--runs", default="runs", help="folder with the .npz files")
 a = p.parse_args()
-KEYS = ["acc", "auc", "ece", "nll"]
-NAMES = {"ce": "Cross-entropy", "ls": "Label smoothing", "focal": "Focal loss"}
+NAMES = {"ce": "Cross-entropy", "ls": "Label smoothing", "focal": "Focal loss", "mcdo": "Dropout 0.5"}
+SETS = ["test"] + [f"c_{c}_{s}" for s in range(1, 6) for c in SEVERITY]
 
 
-def row(label, ms, n=None):
-    cells = [f"{np.mean([m[k] for m in ms]):.3f} ± {np.std([m[k] for m in ms]):.3f}" if len(ms) > 1
-             else f"{ms[0][k]:.3f}" for k in KEYS]
-    return f"| {label} | {n or len(ms)} | " + " | ".join(cells) + " |"
+def probs(logits):
+    return torch.softmax(torch.from_numpy(logits).float(), 1).numpy()
 
 
-lines = [f"# Results: {a.data} (28px, best val-AUC checkpoint)", "",
-         "| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ |", "|---|---|---|---|---|---|"]
-for loss, name in NAMES.items():
-    runs = [np.load(f) for f in sorted(glob.glob(f"runs/{a.data}_28_{loss}_s[0-9].npz"))]
-    if not runs: continue
-    ty = runs[0]["test_labels"].astype(np.int64)
-    vy = runs[0]["val_labels"].astype(np.int64)
-    plain, scaled, temps = [], [], []
-    for r in runs:
-        T = fit_temperature(r["val_logits"], vy); temps.append(T)
-        plain.append(metrics(r["test_logits"], ty)); scaled.append(metrics(r["test_logits"] / T, ty))
-    # ensemble: average member probabilities, then pass log-probs through metrics() (softmax of log p = p)
-    probs = np.mean([torch.softmax(torch.from_numpy(r["test_logits"]), 1).numpy() for r in runs], 0)
-    ens = metrics(np.log(np.clip(probs, 1e-12, None)), ty)
-    epochs = [int(r["best_epoch"]) for r in runs]
-    lines += [row(name, plain),
-              row(f"+ temp. scaling (T = {np.mean(temps):.2f} ± {np.std(temps):.2f})", scaled),
-              row(f"{len(runs)}-seed ensemble", [ens], n=len(runs)),
-              f"| *best epochs: {epochs}* | | | | | |"]
+def score(runs, prefix="", ts=False, ensemble=False):
+    """Per-run (or one ensemble) metrics on every available set: {set: metrics}."""
+    vy = runs[0]["val_labels"].astype(np.int64); ty = runs[0]["test_labels"].astype(np.int64)
+    sets = [s for s in SETS if f"{prefix}{s}_logits" in runs[0]]
+    temps = [fit_temperature(r[f"{prefix}val_logits"], vy) if ts else 1.0 for r in runs]
+    if ensemble:  # average member probabilities; log of the average is a valid logit vector for metrics()
+        return [{s: metrics(np.log(np.clip(np.mean([probs(r[f"{prefix}{s}_logits"] / T) for r, T in zip(runs, temps)], 0),
+                                           1e-12, None)), ty) for s in sets}], temps
+    return [{s: metrics(r[f"{prefix}{s}_logits"] / T, ty) for s in sets} for r, T in zip(runs, temps)], temps
 
-out = "\n".join(lines)
-open(f"results_{a.data}.md", "w", encoding="utf-8").write(out + "\n")
+
+def by_severity(res, key):
+    """Mean over runs of `key`, at severity 0 (clean) and 1..5 averaged over corruption types."""
+    sev = [np.mean([r["test"][key] for r in res])]
+    for s in range(1, 6):
+        sev.append(np.mean([np.mean([r[f"c_{c}_{s}"][key] for c in SEVERITY]) for r in res]))
+    return sev
+
+
+def fmt(vals):
+    return f"{np.mean(vals):.3f} ± {np.std(vals):.3f}" if len(vals) > 1 else f"{vals[0]:.3f}"
+
+
+clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ |", "|---|---|---|---|---|---|"]
+shift = {k: ["| Method | clean | sev 1 | sev 2 | sev 3 | sev 4 | sev 5 |", "|---|---|---|---|---|---|---|"]
+         for k in ["ece", "acc"]}
+for method, (loss, dropout) in METHODS.items():
+    files = sorted(glob.glob(f"{a.runs}/{run_name(a.data, loss, '[0-9]', dropout=dropout, select=a.select)}.npz"))
+    if not files: continue
+    runs = [np.load(f) for f in files]
+    name = NAMES[method]
+    variants = [(name, "", False, False), ("+ temp. scaling", "", True, False),
+                (f"{len(runs)}-seed ensemble", "", False, True)]
+    if dropout:
+        variants = [(f"{name} (single pass)", "", False, False), (f"MC Dropout ({name})", "mc_", False, False),
+                    ("+ temp. scaling", "mc_", True, False)]
+    for label, prefix, ts, ens in variants:
+        res, temps = score(runs, prefix, ts, ens)
+        if ts: label += f" (T = {np.mean(temps):.2f})"
+        clean.append(f"| {label} | {len(runs)} | " + " | ".join(fmt([r['test'][k] for r in res]) for k in ["acc", "auc", "ece", "nll"]) + " |")
+        if "c_noise_1" in res[0]:
+            for k in shift:
+                shift[k].append(f"| {label} | " + " | ".join(f"{v:.3f}" for v in by_severity(res, k)) + " |")
+    clean.append(f"| *best epochs: {[int(r['best_epoch']) for r in runs]}* | | | | | |")
+
+out = [f"# Results: {a.data} (28px, checkpoint selected by val {a.select.upper()})", "",
+       "## Clean test set (mean ± std over seeds)", ""] + clean
+if len(shift["ece"]) > 2:
+    out += ["", "## ECE ↓ under corruption (mean over seeds and the 5 corruption types)", ""] + shift["ece"]
+    out += ["", "## Accuracy under corruption", ""] + shift["acc"]
+out = "\n".join(out)
+dest = f"results_{a.data}_{a.select}.md" if a.runs == "runs" else f"{a.runs}/results_{a.data}_{a.select}.md"
+open(dest, "w", encoding="utf-8").write(out + "\n")
 sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252, which lacks ± and ↓
 print(out)
