@@ -20,7 +20,7 @@ p.add_argument("--select", default="nll", choices=["auc", "nll"])
 p.add_argument("--runs", default="runs", help="folder with the .npz files")
 a = p.parse_args()
 NAMES = {"ce": "Cross-entropy", "ls": "Label smoothing", "focal": "Focal loss", "mcdo": "Dropout 0.5"}
-SETS = ["test"] + [f"c_{c}_{s}" for s in range(1, 6) for c in SEVERITY]
+SETS = ["val", "test"] + [f"c_{c}_{s}" for s in range(1, 6) for c in SEVERITY]
 
 
 def probs(logits):
@@ -34,8 +34,8 @@ def score(runs, prefix="", ts=False, ensemble=False):
     temps = [fit_temperature(r[f"{prefix}val_logits"], vy) if ts else 1.0 for r in runs]
     if ensemble:  # average member probabilities; log of the average is a valid logit vector for metrics()
         return [{s: metrics(np.log(np.clip(np.mean([probs(r[f"{prefix}{s}_logits"] / T) for r, T in zip(runs, temps)], 0),
-                                           1e-12, None)), ty) for s in sets}], temps
-    return [{s: metrics(r[f"{prefix}{s}_logits"] / T, ty) for s in sets} for r, T in zip(runs, temps)], temps
+                                           1e-12, None)), vy if s == "val" else ty) for s in sets}], temps
+    return [{s: metrics(r[f"{prefix}{s}_logits"] / T, vy if s == "val" else ty) for s in sets} for r, T in zip(runs, temps)], temps
 
 
 def by_severity(res, key):
@@ -50,7 +50,8 @@ def fmt(vals):
     return f"{np.mean(vals):.3f} ± {np.std(vals):.3f}" if len(vals) > 1 else f"{vals[0]:.3f}"
 
 
-clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ |", "|---|---|---|---|---|---|"]
+# val ECE is in-sample for checkpoint selection and temperature fitting; the gap is what fails to transfer to test
+clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ | val ECE | test − val ECE |", "|---|---|---|---|---|---|---|---|"]
 shift = {k: ["| Method | clean | sev 1 | sev 2 | sev 3 | sev 4 | sev 5 |", "|---|---|---|---|---|---|---|"]
          for k in ["ece", "acc"]}
 for method, (loss, dropout) in METHODS.items():
@@ -66,11 +67,12 @@ for method, (loss, dropout) in METHODS.items():
     for label, prefix, ts, ens in variants:
         res, temps = score(runs, prefix, ts, ens)
         if ts: label += f" (T = {np.mean(temps):.2f})"
-        clean.append(f"| {label} | {len(runs)} | " + " | ".join(fmt([r['test'][k] for r in res]) for k in ["acc", "auc", "ece", "nll"]) + " |")
+        clean.append(f"| {label} | {len(runs)} | " + " | ".join(fmt([r['test'][k] for r in res]) for k in ["acc", "auc", "ece", "nll"])
+                     + f" | {fmt([r['val']['ece'] for r in res])} | {fmt([r['test']['ece'] - r['val']['ece'] for r in res])} |")
         if "c_noise_1" in res[0]:
             for k in shift:
                 shift[k].append(f"| {label} | " + " | ".join(f"{v:.3f}" for v in by_severity(res, k)) + " |")
-    clean.append(f"| *best epochs: {[int(r['best_epoch']) for r in runs]}* | | | | | |")
+    clean.append(f"| *best epochs: {[int(r['best_epoch']) for r in runs]}* | | | | | | | |")
 
 out = [f"# Results: {a.data} (28px, checkpoint selected by val {a.select.upper()})", "",
        "## Clean test set (mean ± std over seeds)", ""] + clean
