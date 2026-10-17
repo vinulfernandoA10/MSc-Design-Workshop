@@ -3,3 +3,5 @@ runs*/
 *.pt
 *.npz
 __pycache__/
+# local knowledge-graph output from /graphify
+graphify-out/
