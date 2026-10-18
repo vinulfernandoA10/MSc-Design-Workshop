@@ -10,7 +10,7 @@ import numpy as np
 import torch, torch.nn as nn, torch.nn.functional as F
 import torchvision, torchvision.transforms as T
 import medmnist
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 from corrupt import SEVERITY, corrupt
 
 
@@ -39,7 +39,9 @@ def metrics(logits, labels):
     probs = torch.softmax(torch.from_numpy(logits), 1).numpy()
     auc = roc_auc_score(labels, probs[:, 1]) if probs.shape[1] == 2 else roc_auc_score(labels, probs, multi_class="ovr")
     nll = F.cross_entropy(torch.from_numpy(logits), torch.from_numpy(labels)).item()
-    return dict(acc=(probs.argmax(1) == labels).mean(), auc=auc, ece=ece(probs, labels), nll=nll)
+    # bacc = mean per-class recall: unlike accuracy, it does not reward collapsing onto the majority class
+    return dict(acc=(probs.argmax(1) == labels).mean(), bacc=balanced_accuracy_score(labels, probs.argmax(1)),
+                auc=auc, ece=ece(probs, labels), nll=nll)
 
 
 def resnet18(in_ch, n_cls, p_drop=0.0):
