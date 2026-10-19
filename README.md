@@ -28,6 +28,36 @@ python analyze.py --data pneumoniamnist
 | `temp_scale.py` | Temperature scaling on saved logits |
 | `run_all.py` | Runs every method x seed; skips finished runs |
 | `analyze.py` | Mean ± std over seeds, temperature scaling, ensembles, shift tables |
+| `significance.py` | Paired Wilcoxon tests (Holm-corrected), pooled over datasets and seeds |
+| `figures.py` | Thesis figures (ECE vs severity, temperature-scaling effect, reliability diagrams) |
+
+## Key findings
+
+3 datasets x 4 methods x 5 seeds; significance = paired Wilcoxon over 15 (dataset, seed) pairs, Holm-corrected.
+
+1. **Calibration degrades under shift for every method** (RQ1). Cross-entropy ECE grows up to 14x
+   from clean to severity-5 corruption (BloodMNIST: 0.029 → 0.413).
+2. **Calibration built into training is more robust to shift.** At severity 5, label smoothing
+   (−0.056 ECE, 13/15 pairs, p = 0.002) and focal loss (−0.060, 14/15, p = 0.002) beat cross-entropy;
+   5-seed ensembles are the most robust overall.
+3. **Temperature scaling only works when validation matches test** (RQ2). It significantly improves
+   cross-entropy on clean data (13/15, p = 0.016) on DermaMNIST and BloodMNIST, but barely helps or hurts
+   on PneumoniaMNIST, whose val/test class balance differs (74.2% vs 62.5% pneumonia).
+4. **Temperature scaling can make a robust method fragile.** Label smoothing and focal loss leave models
+   slightly underconfident (T < 1); temperature scaling removes that margin, and label smoothing + TS is
+   worse under corruption in 15/15 pairs (+0.043 ECE, p = 0.0004).
+5. **No method is reliably best on clean data**: the ranking flips between datasets.
+6. **Trade-off:** label smoothing significantly lowers AUC (worse in 14/15 pairs, p = 0.006).
+7. **Methodology:** selecting checkpoints by val AUC is close to arbitrary (val AUC is flat for most of
+   training), so checkpoints are selected by val NLL, which cut seed-to-seed ECE spread about 3x.
+
+![ECE vs severity](figures/fig1_ece_vs_severity.png)
+![Effect of temperature scaling](figures/fig2_temp_scaling_effect.png)
+![Reliability diagrams](figures/fig3_reliability.png)
+
+Limitations: 28px images; MC Dropout uses dropout before the classifier only (it adds little over a
+single pass); on imbalanced DermaMNIST, heavy corruption pushes predictions to the majority class, so
+shift results are also reported as balanced accuracy.
 
 ## Results
 
