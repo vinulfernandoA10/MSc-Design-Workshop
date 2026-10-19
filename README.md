@@ -31,7 +31,11 @@ python analyze.py --data pneumoniamnist
 
 ## Results
 
-- [results_pneumoniamnist_auc.md](results_pneumoniamnist_auc.md): 5 seeds, checkpoint selected by val AUC (MedMNIST protocol), clean test only.
+Main experiments (4 methods x 5 seeds, checkpoint selected by val NLL, 50 epochs, clean + 25 corrupted test sets):
+[PneumoniaMNIST](results_pneumoniamnist_nll.md) · [DermaMNIST](results_dermamnist_nll.md) · [BloodMNIST](results_bloodmnist_nll.md) ·
+[pooled significance tests](significance_pneumoniamnist_dermamnist_bloodmnist_nll.md) (`python significance.py --data pneumoniamnist dermamnist bloodmnist`).
+
+Earlier: [results_pneumoniamnist_auc.md](results_pneumoniamnist_auc.md): 5 seeds, checkpoint selected by val AUC (MedMNIST protocol), clean test only.
 
 ### Seed 0 only (PneumoniaMNIST, 28px)
 
