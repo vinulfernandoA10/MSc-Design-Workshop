@@ -20,7 +20,8 @@ from analyze import by_severity, probs, score
 from corrupt import SEVERITY
 from train_baseline import METHODS, ece, run_name
 
-DATASETS = {"pneumoniamnist": "PneumoniaMNIST", "dermamnist": "DermaMNIST", "bloodmnist": "BloodMNIST"}
+DATASETS = {"pneumoniamnist": "PneumoniaMNIST", "dermamnist": "DermaMNIST", "bloodmnist": "BloodMNIST",
+            "organcmnist": "OrganCMNIST"}
 SERIES = [  # method, logit prefix, label, colour (fixed slot order), marker
     ("ce", "", "Cross-entropy", "#2a78d6", "o"), ("ls", "", "Label smoothing", "#eb6834", "s"),
     ("focal", "", "Focal loss", "#1baf7a", "^"), ("mcdo", "mc_", "MC Dropout", "#eda100", "D")]
@@ -52,20 +53,24 @@ def end_labels(ax, ends):
 
 
 def severity_figure(metric_fn, ylabel, title, fname, zero_line=False):
-    fig, axes = plt.subplots(1, 3, figsize=(10, 3.4))
+    fig, axes = plt.subplots(2, 2, figsize=(9, 6.6))
+    axes = axes.ravel()  # an array, not the .flat iterator (which zip() consumes)
     for ax, (data, dname) in zip(axes, DATASETS.items()):
         ends = []
         for method, prefix, label, colour, marker in SERIES:
             y = metric_fn(runs(data, method), prefix)
             ax.plot(X, y, color=colour, lw=2, marker=marker, ms=5, mec=SURF, mew=1, label=label, zorder=3)
             ends.append((y[-1], label))
+        if data == "dermamnist": ends_top_right = ends  # direct labels on one panel; the legend covers the rest
         if zero_line: ax.axhline(0, color=BASE, lw=1, zorder=1)
-        ax.set_title(dname, loc="left"); ax.set_xticks(X, XT); ax.set_xlabel("Corruption severity")
+        ax.set_title(dname, loc="left"); ax.set_xticks(X, XT)
+        if ax in (axes[2], axes[3]): ax.set_xlabel("Corruption severity")
         ax.set_xlim(-0.3, 5.3)
-    end_labels(axes[-1], ends)
-    axes[0].set_ylabel(ylabel)
+    end_labels(axes[1], ends_top_right)
+    for ax in (axes[0], axes[2]): ax.set_ylabel(ylabel)
     fig.legend(*axes[0].get_legend_handles_labels(), loc="upper center", ncol=4, bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle(title, x=0.01, y=1.1, ha="left", fontsize=11, color=INK)
+    fig.suptitle(title, x=0.01, y=1.06, ha="left", fontsize=11, color=INK)
+    fig.tight_layout(h_pad=2)
     save(fig, fname)
 
 
@@ -96,7 +101,7 @@ def reliability(rs, keys, n_bins=10):
 
 
 def reliability_figure():
-    fig, axes = plt.subplots(2, 3, figsize=(10, 6.4), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 4, figsize=(12.5, 6.6), sharex=True, sharey=True)
     for col, (data, dname) in enumerate(DATASETS.items()):
         for row, (keys, cond) in enumerate([(["test_logits"], "clean"),
                                             ([f"c_{c}_5_logits" for c in SEVERITY], "severity 5")]):

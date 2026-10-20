@@ -33,21 +33,24 @@ python analyze.py --data pneumoniamnist
 
 ## Key findings
 
-3 datasets x 4 methods x 5 seeds; significance = paired Wilcoxon over 15 (dataset, seed) pairs, Holm-corrected.
+4 datasets x 4 methods x 5 seeds; significance = paired Wilcoxon over 20 (dataset, seed) pairs, Holm-corrected.
 
 1. **Calibration degrades under shift for every method** (RQ1). Cross-entropy ECE grows up to 14x
    from clean to severity-5 corruption (BloodMNIST: 0.029 → 0.413).
 2. **Calibration built into training is more robust to shift.** At severity 5, label smoothing
-   (−0.056 ECE, 13/15 pairs, p = 0.002) and focal loss (−0.060, 14/15, p = 0.002) beat cross-entropy;
-   5-seed ensembles are the most robust overall.
-3. **Temperature scaling only works when validation matches test** (RQ2). It significantly improves
-   cross-entropy on clean data (13/15, p = 0.016) on DermaMNIST and BloodMNIST, but barely helps or hurts
-   on PneumoniaMNIST, whose val/test class balance differs (74.2% vs 62.5% pneumonia).
+   (−0.105 ECE, 18/20 pairs, p = 0.0001) and focal loss (−0.089, 19/20, p = 0.0001) beat cross-entropy;
+   MC Dropout helps less (−0.027, 14/20, p = 0.03); 5-seed ensembles are the most robust overall.
+3. **Temperature scaling cannot remove a validation/test label shift** (RQ2). It significantly improves
+   cross-entropy (clean: 18/20, p = 0.0005). Where val and test class balance match (DermaMNIST,
+   BloodMNIST) the remaining test − val ECE gap is ≈ 0; where they differ it stays: PneumoniaMNIST
+   (class-distribution distance 0.117) +0.104 → +0.104, OrganCMNIST (0.191) +0.047 → +0.025.
 4. **Temperature scaling can make a robust method fragile.** Label smoothing and focal loss leave models
    slightly underconfident (T < 1); temperature scaling removes that margin, and label smoothing + TS is
-   worse under corruption in 15/15 pairs (+0.043 ECE, p = 0.0004).
-5. **No method is reliably best on clean data**: the ranking flips between datasets.
-6. **Trade-off:** label smoothing significantly lowers AUC (worse in 14/15 pairs, p = 0.006).
+   worse under corruption in 20/20 pairs (+0.067 ECE at severity 5, p < 0.0001).
+5. **No method is reliably best on clean data**: label smoothing and focal loss vs cross-entropy are not
+   significant on clean data; the ranking flips between datasets.
+6. **Trade-off:** label smoothing lowers AUC in 18/20 pairs (p = 0.001); the effect is large on
+   PneumoniaMNIST (−0.1) and small elsewhere (≤ 0.01).
 7. **Methodology:** selecting checkpoints by val AUC is close to arbitrary (val AUC is flat for most of
    training), so checkpoints are selected by val NLL, which cut seed-to-seed ECE spread about 3x.
 
@@ -63,7 +66,8 @@ shift results are also reported as balanced accuracy.
 
 Main experiments (4 methods x 5 seeds, checkpoint selected by val NLL, 50 epochs, clean + 25 corrupted test sets):
 [PneumoniaMNIST](results_pneumoniamnist_nll.md) · [DermaMNIST](results_dermamnist_nll.md) · [BloodMNIST](results_bloodmnist_nll.md) ·
-[pooled significance tests](significance_pneumoniamnist_dermamnist_bloodmnist_nll.md) (`python significance.py --data pneumoniamnist dermamnist bloodmnist`).
+[OrganCMNIST](results_organcmnist_nll.md) · [pooled significance tests](significance_pneumoniamnist_dermamnist_bloodmnist_organcmnist_nll.md)
+(`python significance.py --data pneumoniamnist dermamnist bloodmnist organcmnist`).
 
 Earlier: [results_pneumoniamnist_auc.md](results_pneumoniamnist_auc.md): 5 seeds, checkpoint selected by val AUC (MedMNIST protocol), clean test only.
 
