@@ -8,6 +8,8 @@ Experiments are complete: 4 datasets (pneumonia, derma, blood, organc MNIST, 28p
 (cross-entropy, label smoothing, focal loss, MC Dropout) x 5 seeds, checkpoint selected by val NLL,
 50 epochs, evaluated clean + 5 corruptions x 5 severities. Results: `results_<data>_nll.md`; pooled
 tests: `significance_pneumoniamnist_dermamnist_bloodmnist_organcmnist_nll.md`; figures in `figures/`.
+Also done: RQ3 selective prediction (E-AURC, `rq3_rq4_summary.md`), RQ4 cost vs ensembles (same file),
+OOD detection (`results_ood.md`; cached OOD logits in `runs/ood_*.npz`).
 Next phase: literature review and thesis writing.
 
 ## Environment

@@ -54,7 +54,7 @@ if __name__ == "__main__":  # importable: significance.py reuses score()
     # val ECE is in-sample for checkpoint selection and temperature fitting; the gap is what fails to transfer to test
     clean = ["| Method | Runs | Acc | AUC | ECE ↓ | NLL ↓ | val ECE | test − val ECE |", "|---|---|---|---|---|---|---|---|"]
     shift = {k: ["| Method | clean | sev 1 | sev 2 | sev 3 | sev 4 | sev 5 |", "|---|---|---|---|---|---|---|"]
-             for k in ["ece", "acc", "bacc"]}
+             for k in ["ece", "acc", "bacc", "eaurc", "acc80"]}
     for method, (loss, dropout) in METHODS.items():
         files = sorted(glob.glob(f"{a.runs}/{run_name(a.data, loss, '[0-9]', dropout=dropout, select=a.select)}.npz"))
         if not files: continue
@@ -81,6 +81,8 @@ if __name__ == "__main__":  # importable: significance.py reuses score()
         out += ["", "## ECE ↓ under corruption (mean over seeds and the 5 corruption types)", ""] + shift["ece"]
         out += ["", "## Accuracy under corruption", ""] + shift["acc"]
         out += ["", "## Balanced accuracy under corruption (mean per-class recall; immune to majority-class collapse)", ""] + shift["bacc"]
+        out += ["", "## Selective prediction (RQ3): E-AURC ↓ under corruption (how well confidence ranks right above wrong)", ""] + shift["eaurc"]
+        out += ["", "## Selective prediction (RQ3): accuracy on the 80% most confident cases", ""] + shift["acc80"]
     out = "\n".join(out)
     dest = f"results_{a.data}_{a.select}.md" if a.runs == "runs" else f"{a.runs}/results_{a.data}_{a.select}.md"
     open(dest, "w", encoding="utf-8").write(out + "\n")

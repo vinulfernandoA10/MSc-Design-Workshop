@@ -29,6 +29,8 @@ METRICS = {  # name -> (extractor, lower is better)
     "ECE, clean test": (lambda r: r["test"]["ece"], True),
     "ECE, severity 5": (lambda r: np.mean([r[f"c_{c}_5"]["ece"] for c in SEVERITY]), True),
     "AUC, clean test": (lambda r: r["test"]["auc"], False),
+    "E-AURC, clean test (RQ3)": (lambda r: r["test"]["eaurc"], True),
+    "E-AURC, severity 5 (RQ3)": (lambda r: np.mean([r[f"c_{c}_5"]["eaurc"] for c in SEVERITY]), True),
 }
 
 
@@ -68,7 +70,7 @@ def main():
         rows, ps = [], []
         for A, B in COMPARISONS:
             keys = sorted(set(res[A]) & set(res[B]))
-            if not keys or (metric.endswith("severity 5") and "c_noise_5" not in res[A][keys[0]]): continue
+            if not keys or ("severity 5" in metric and "c_noise_5" not in res[A][keys[0]]): continue
             diff = np.array([get(res[A][k]) - get(res[B][k]) for k in keys])
             diff[np.abs(diff) < 1e-9] = 0  # float noise is a tie (e.g. temperature scaling cannot change AUC)
             wins = int(np.sum(diff < 0) if lower else np.sum(diff > 0))

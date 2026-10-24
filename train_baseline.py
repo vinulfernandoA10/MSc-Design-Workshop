@@ -22,6 +22,21 @@ def ece(probs, labels, n_bins=15):
                for b in range(n_bins) if (m := bins == b).any())
 
 
+def selective(probs, labels, coverage=0.8):
+    """Selective prediction (RQ3): accept the most confident cases first, refer the rest.
+
+    aurc  = area under the risk-coverage curve (mean error rate over all coverage levels);
+    eaurc = aurc minus the best possible aurc for this many errors (Geifman et al., 2019), i.e. how
+            well confidence ranks correct above wrong predictions, independent of overall accuracy;
+    acc80 = accuracy on the `coverage` most confident fraction of cases.
+    """
+    conf, err = probs.max(1), (probs.argmax(1) != labels).astype(float)
+    n, k = len(err), np.arange(1, len(err) + 1)
+    risk = np.cumsum(err[np.argsort(-conf, kind="stable")]) / k
+    best = np.maximum(0, k - (n - err.sum())) / k  # oracle: every error ranked last
+    return dict(aurc=risk.mean(), eaurc=risk.mean() - best.mean(), acc80=1 - risk[int(coverage * n) - 1])
+
+
 def focal_loss(logits, y, gamma=3.0):
     """Focal loss (Lin et al., 2017); gamma=3 is the calibration setting of Mukhoti et al. (2020)."""
     logp = F.log_softmax(logits, 1).gather(1, y[:, None]).squeeze(1)
@@ -41,7 +56,7 @@ def metrics(logits, labels):
     nll = F.cross_entropy(torch.from_numpy(logits), torch.from_numpy(labels)).item()
     # bacc = mean per-class recall: unlike accuracy, it does not reward collapsing onto the majority class
     return dict(acc=(probs.argmax(1) == labels).mean(), bacc=balanced_accuracy_score(labels, probs.argmax(1)),
-                auc=auc, ece=ece(probs, labels), nll=nll)
+                auc=auc, ece=ece(probs, labels), nll=nll, **selective(probs, labels))
 
 
 def resnet18(in_ch, n_cls, p_drop=0.0):
@@ -169,4 +184,9 @@ if __name__ == "__main__":
     assert abs(ece(np.array([[.9, .1]] * 4), y) - 0.4) < 1e-9
     z, t = torch.randn(8, 3), torch.randint(0, 3, (8,))  # focal loss with gamma=0 reduces to cross-entropy
     assert torch.allclose(focal_loss(z, t, gamma=0), F.cross_entropy(z, t))
+    # selective prediction: errors ranked last gives e-aurc 0; errors ranked first is worse
+    lab = np.array([0, 0, 0, 1]); good = np.array([[.9, .1], [.8, .2], [.7, .3], [.6, .4]])  # last is wrong, least confident
+    bad = np.array([[.6, .4], [.7, .3], [.8, .2], [.95, .05]])  # the wrong prediction is the most confident
+    s_good, s_bad = selective(good, lab), selective(bad, lab)
+    assert abs(s_good["eaurc"]) < 1e-12 and s_bad["eaurc"] > 0.3 and s_good["acc80"] == 1.0
     main()

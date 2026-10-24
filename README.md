@@ -29,6 +29,8 @@ python analyze.py --data pneumoniamnist
 | `run_all.py` | Runs every method x seed; skips finished runs |
 | `analyze.py` | Mean ± std over seeds, temperature scaling, ensembles, shift tables |
 | `significance.py` | Paired Wilcoxon tests (Holm-corrected), pooled over datasets and seeds |
+| `rq_summary.py` | RQ3 (calibration vs selective prediction) and RQ4 (cheap methods vs ensembles) across datasets |
+| `ood.py` | Out-of-distribution detection with the saved models (inference only, cached) |
 | `figures.py` | Thesis figures (ECE vs severity, temperature-scaling effect, reliability diagrams) |
 
 ## Key findings
@@ -51,14 +53,26 @@ python analyze.py --data pneumoniamnist
    significant on clean data; the ranking flips between datasets.
 6. **Trade-off:** label smoothing lowers AUC in 18/20 pairs (p = 0.001); the effect is large on
    PneumoniaMNIST (−0.1) and small elsewhere (≤ 0.01).
-7. **Methodology:** selecting checkpoints by val AUC is close to arbitrary (val AUC is flat for most of
+7. **Calibration ≠ selective prediction (RQ3).** How well confidence ranks right above wrong answers
+   (E-AURC) is weakly and inconsistently related to ECE (Spearman ρ −0.23 to +0.40 across datasets).
+   Temperature scaling changes ECE a lot but E-AURC by < 0.001; label smoothing is better calibrated
+   under shift yet significantly worse at selective prediction (clean: 19/20 pairs, p = 0.0001).
+8. **Cheap methods vs ensembles (RQ4).** At 1/5 of the cost, single label-smoothing and focal-loss models
+   match the cross-entropy ensemble's calibration under shift (ECE sev 5: 0.194 and 0.212 vs 0.216, not
+   significantly different); plain cross-entropy, CE + temperature scaling and MC Dropout are significantly
+   worse. For selective prediction, ensembles add little. Details: [rq3_rq4_summary.md](rq3_rq4_summary.md).
+9. **Confidence does not flag foreign images (OOD).** Max-softmax AUROC for telling a model's own test
+   images from other modalities ranges from 0.90 (OrganCMNIST) to **0.30** (BloodMNIST: more confident on
+   X-rays than on blood cells), and no method changes this significantly; ensembles help slightly on all
+   four datasets. Details: [results_ood.md](results_ood.md).
+10. **Methodology:** selecting checkpoints by val AUC is close to arbitrary (val AUC is flat for most of
    training), so checkpoints are selected by val NLL, which cut seed-to-seed ECE spread about 3x.
 
 ![ECE vs severity](figures/fig1_ece_vs_severity.png)
 ![Effect of temperature scaling](figures/fig2_temp_scaling_effect.png)
 ![Reliability diagrams](figures/fig3_reliability.png)
 
-Limitations: 28px images; MC Dropout uses dropout before the classifier only (it adds little over a
+Limitations: 28px images; OOD uses only the max-softmax score and other MedMNIST modalities (far-OOD); MC Dropout uses dropout before the classifier only (it adds little over a
 single pass); on imbalanced DermaMNIST, heavy corruption pushes predictions to the majority class, so
 shift results are also reported as balanced accuracy.
 
